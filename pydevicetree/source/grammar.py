@@ -6,6 +6,7 @@ import os
 import sys
 
 import pyparsing as p # type: ignore
+p.enable_all_warnings()
 
 ENV_CACHE_OPTION = "PYDEVICETREE_CACHE_SIZE_BOUND"
 
@@ -21,7 +22,7 @@ p.ParserElement.enablePackrat(cache_bound)
 
 node_name = p.Word(p.alphanums + ",.-+_") ^ p.Literal("/")
 integer = p.pyparsing_common.integer ^ (p.Literal("0x").suppress() + p.pyparsing_common.hex_integer)
-unit_address = p.pyparsing_common.hex_integer
+unit_address = p.Optional(p.Literal("0x").suppress()) + p.pyparsing_common.hex_integer
 node_handle = node_name("node_name") + p.Optional(p.Literal("@") + unit_address("address"))
 property_name = p.Word(p.alphanums + ",.-_+?#")
 label = p.Word(p.alphanums + "_").setResultsName("label")
@@ -43,7 +44,7 @@ operator = p.oneOf("~ ! * / + - << >> < <= > >= == != & ^ | && ||")
 arith_expr = p.Forward()
 ternary_element = arith_expr ^ integer
 ternary_expr = ternary_element + p.Literal("?") + ternary_element + p.Literal(":") + ternary_element
-arith_expr = p.nestedExpr(content=(p.OneOrMore(operator ^ integer) ^ ternary_expr))
+arith_expr << p.nestedExpr(content=(p.OneOrMore(operator ^ integer) ^ ternary_expr))
 
 cell_array = p.Literal("<").suppress() + \
         p.ZeroOrMore(integer ^ arith_expr ^ string ^ reference ^ label_creation.suppress()) + \
@@ -52,7 +53,11 @@ bytestring = p.Literal("[").suppress() + \
         (p.OneOrMore(p.Word(p.hexnums, exact=2) ^ label_creation.suppress())) + \
         p.Literal("]").suppress()
 property_values = p.Forward()
-property_values = p.delimitedList(property_values ^ cell_array ^ bytestring ^ stringlist ^ \
+# NOTE: before this was `property_values = p.delimitedList(property_values, ...)`
+# That would just have a reference to an empty forward, it wouldn't make the forward recursive.
+# If you try to make the forward recursive, it recurses infinitely.
+# Therefore ignore it
+property_values << p.delimitedList(cell_array ^ bytestring ^ stringlist ^ \
                                   reference)
 property_assignment = property_name("property_name") + p.Optional(p.Literal("=").suppress() + \
         (property_values)).setResultsName("value") + p.Literal(";").suppress()
@@ -61,7 +66,6 @@ node_opener = p.Optional(label_creation) + node_handle + p.Literal("{").suppress
 node_reference_opener = reference + p.Literal("{").suppress()
 node_closer = p.Literal("}").suppress() + p.Literal(";").suppress()
 node_definition = p.Forward()
-# pylint: disable=expression-not-assigned
 node_definition << (node_opener ^ node_reference_opener) + \
         p.ZeroOrMore(property_assignment ^ directive ^ node_definition) + \
         node_closer
